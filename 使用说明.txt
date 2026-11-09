@@ -1,0 +1,65 @@
+Qoder + JoyCode 合并网关 使用说明
+================================
+
+【一、这是什么】
+把 Qoder 反代（8790）和 JoyCode 反代（8318）两份额度合成一个入口。
+DSH 只需要配一个地址：http://127.0.0.1:8320/v1
+网关按「模型名」自动把请求转给对应的上游，DSH 侧不用关心背后是谁。
+
+【二、启动 / 停止】
+- 桌面「DSH反代开关.bat」：没跑时回车启动；跑着时 1 健康检查页 / 2 重启 / 3 停止
+- 也可以双击本目录「启动dsh反代.bat」（前台跑，关窗口就停）
+- 前提：两个上游要先跑起来（Qoder CN反代开关.bat、JoyCode反代开关.bat）
+- 改了 .env 必须重启网关才生效
+
+【三、路由转发规则】
+1. GET /v1/models  -> 合并两个上游的模型列表，共 18 个（Qoder 13 + JoyCode 5）
+2. POST /v1/chat/completions（及其他路径）
+   读请求体里的 model，查路由表决定给谁：
+   - 属于 Qoder 名单 -> 转发到 8790
+   - 属于 JoyCode 名单 -> 转发到 8318
+   - 认不出来的模型 -> 强制刷新一次模型表，仍认不出就交给 DEFAULT_UPSTREAM（默认 qoder）
+3. 前缀强制路由：model 写成 "qoder/xxx" 或 "joycode/xxx"，
+   网关剥掉前缀后强制走指定上游（用于同名模型或临时切换）
+4. 其余路径（如 /健康检查以外的接口）按默认上游转发
+5. 响应头里会带 x-gateway-upstream，标明这次实际走了谁
+
+【四、HTTP 方法与请求头】
+1. 支持 GET / POST / PUT / DELETE / PATCH / HEAD / OPTIONS
+2. 请求头全部透传（除 host/connection/content-length 等代理自管头）
+   含 Authorization、Content-Type、Cookie、自定义头
+3. 响应头透传，流式响应（SSE）逐块转发，DSH 流式输出正常
+
+【五、跨域（CORS）】
+1. 所有响应自动带 CORS 头
+2. OPTIONS 预检直接 204，不打上游
+3. CORS_ORIGINS=* 放行全部，或填白名单
+
+【六、错误处理】
+1. 上游连不上 -> 502 {"error":{"message":"上游连接失败: ECONNREFUSED","type":"gateway_upstream_unreachable"}}
+2. 上游超时 -> 504 {"error":{"message":"上游超时...","type":"gateway_upstream_timeout"}}
+3. 上游自己报错（如 JoyCode 积分不足 9033）-> 状态码和报文原样透传，一眼能看到原因
+4. REQUIRE_CLIENT_KEY 设了且 key 不对 -> 401
+
+【七、配置项（.env，改完重启）】
+GATEWAY_HOST       监听地址，默认 127.0.0.1
+GATEWAY_PORT       监听端口，默认 8320
+QODER_BASE         Qoder 反代地址，默认 http://127.0.0.1:8790
+JOYCODE_BASE       JoyCode 反代地址，默认 http://127.0.0.1:8318
+DEFAULT_UPSTREAM   认不出模型时默认给谁，默认 qoder
+CORS_ORIGINS       允许来源，* 或白名单
+TIMEOUT_MS         上游超时毫秒，默认 300000（只管到响应头，长回复不被掐）
+REQUIRE_CLIENT_KEY 可选，DSH 端要填的 key，留空不校验
+MODEL_MAP          可选，手工指定 {"模型":"qoder|joycode"}
+LOG_REQUESTS       控制台日志 1 开 0 关
+
+【八、DSH 那边怎么配】
+接口地址（Base URL）填：http://127.0.0.1:8320/v1
+API Key：随便填（除非在 .env 里设了 REQUIRE_CLIENT_KEY）
+模型：从 18 个里挑，具体走哪个通道网关自己判断
+
+【九、常见问题】
+- 打不开：浏览器开 http://127.0.0.1:8320/health 看两个上游是否 reachable
+- 报「积分余额不足」：那是 JoyCode 上游额度用完了，不是网关问题；
+  换 Qoder 的模型（如 Auto、GLM-5.3）即可，或给 JoyCode 充值
+- 改了配置没反应：没重启
