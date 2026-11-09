@@ -6,7 +6,7 @@
 // 配置：同目录 .env（说明见 使用说明.txt）
 // ============================================================
 import http from 'node:http';
-import { readFileSync, existsSync } from 'node:fs';
+import { readFileSync, writeFileSync, existsSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -39,6 +39,73 @@ const UPSTREAMS = {
   qoder:   CFG.qoder,
   joycode: CFG.joycode,
 };
+
+// ---------- 按通道的用量记账（JoyCode 上游不返回余额，只能看消耗） ----------
+const USAGE_FILE = join(__dirname, 'usage.json');
+const todayStr = () => new Date().toISOString().slice(0, 10);
+const emptyBucket = () => ({ requests: 0, prompt: 0, completion: 0, failed: 0 });
+let USAGE = {
+  date: todayStr(),
+  today: { qoder: emptyBucket(), joycode: emptyBucket() },
+  total: { qoder: emptyBucket(), joycode: emptyBucket() },
+};
+try {
+  if (existsSync(USAGE_FILE)) {
+    const u = JSON.parse(readFileSync(USAGE_FILE, 'utf-8'));
+    if (u && u.total) {
+      USAGE = u;
+      if (USAGE.date !== todayStr()) { USAGE.date = todayStr(); USAGE.today = { qoder: emptyBucket(), joycode: emptyBucket() }; }
+    }
+  }
+} catch { /* 账本坏了就从零开始，不影响转发 */ }
+
+function recordUsage(upstream, { prompt = 0, completion = 0, ok = true } = {}) {
+  if (!USAGE.today[upstream]) return;
+  if (USAGE.date !== todayStr()) { USAGE.date = todayStr(); USAGE.today = { qoder: emptyBucket(), joycode: emptyBucket() }; }
+  for (const bucket of [USAGE.today[upstream], USAGE.total[upstream]]) {
+    bucket.requests += 1;
+    bucket.prompt += prompt || 0;
+    bucket.completion += completion || 0;
+    if (!ok) bucket.failed += 1;
+  }
+  try { writeFileSync(USAGE_FILE, JSON.stringify(USAGE, null, 2)); } catch {}
+}
+
+// 从响应体（JSON 或 SSE 尾巴）里抠出 usage（usage 里可能嵌套 details，需括号配对）
+function extractUsage(text) {
+  if (!text) return { prompt: 0, completion: 0 };
+  let idx = -1, from = 0;
+  for (;;) {
+    const k = text.indexOf('"usage"', from);
+    if (k === -1) break;
+    idx = k; from = k + 7;
+  }
+  if (idx === -1) return { prompt: 0, completion: 0 };
+  const start = text.indexOf('{', idx);
+  if (start === -1) return { prompt: 0, completion: 0 };
+  let depth = 0, inStr = false, esc = false;
+  for (let i = start; i < text.length; i++) {
+    const ch = text[i];
+    if (inStr) {
+      if (esc) esc = false;
+      else if (ch === '\\') esc = true;
+      else if (ch === '"') inStr = false;
+      continue;
+    }
+    if (ch === '"') inStr = true;
+    else if (ch === '{') depth++;
+    else if (ch === '}') {
+      depth--;
+      if (depth === 0) {
+        try {
+          const u = JSON.parse(text.slice(start, i + 1));
+          return { prompt: u.prompt_tokens || 0, completion: u.completion_tokens || 0 };
+        } catch { return { prompt: 0, completion: 0 }; }
+      }
+    }
+  }
+  return { prompt: 0, completion: 0 };
+}
 
 // 模型 -> 上游 的路由表（启动时拉取，定期/按需刷新）
 const routeTable = new Map();   // modelName -> 'qoder' | 'joycode'
@@ -185,6 +252,7 @@ const server = http.createServer(async (req, res) => {
         gateway: { port: CFG.port, routes: routeTable.size, fallback: CFG.fallback },
         upstreams: {},
         credits: null,
+        usage: USAGE,
         routes: [...routeTable.entries()].map(([m, up]) => ({ model: m, upstream: up })),
       };
       for (const [name, base] of Object.entries(UPSTREAMS)) {
@@ -290,8 +358,21 @@ const server = http.createServer(async (req, res) => {
     Object.assign(resHeaders, cors);
     resHeaders['x-gateway-upstream'] = target;
     res.writeHead(upstream.status, resHeaders);
-    if (upstream.body) for await (const chunk of upstream.body) res.write(chunk);
+    // 边转发边攒一段文本，事后从中抠 usage（流式取 SSE 尾巴，非流式取整个 JSON）
+    const dec = new TextDecoder();
+    let seen = '';
+    const isChat = u.pathname.includes('/chat/completions');
+    if (upstream.body) {
+      for await (const chunk of upstream.body) {
+        res.write(chunk);
+        if (isChat && seen.length < 300000) seen += dec.decode(chunk, { stream: true });
+      }
+    }
     res.end();
+    if (isChat) {
+      const u2 = extractUsage(seen);
+      recordUsage(target, { prompt: u2.prompt, completion: u2.completion, ok: upstream.ok });
+    }
     if (CFG.log) console.log(req.method + ' ' + u.pathname + ' [' + (model || '-') + ' -> ' + target + '] ' + upstream.status + ' ' + (Date.now() - t0) + 'ms');
 
   } catch (e) {

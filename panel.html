@@ -136,6 +136,17 @@
     <div class="kpi"><div class="k">剩余积分</div><div class="v" id="k-credit">500<small>点</small></div></div>
   </div>
 
+
+  <section>
+    <h2>通道用量 <span class="count">今日</span></h2>
+    <div class="panel">
+      <table>
+        <thead><tr><th>通道</th><th>今日请求</th><th>今日输入 tok</th><th>今日输出 tok</th><th>累计请求</th><th>累计输出 tok</th><th>失败</th></tr></thead>
+        <tbody id="usage-body"></tbody>
+      </table>
+    </div>
+    <p style="font-size:12px;color:#6b7280;margin-top:8px">JoyCode 上游不返回积分余额（只返回 token 数），所以这里按消耗展示；Qoder 的余额见上方账号池。</p>
+  </section>
   <section>
     <h2>Qoder 账号池 <span class="count" id="acct-count">2</span></h2>
     <div class="panel">
@@ -278,6 +289,24 @@ function render(d, mode){
       </tr>`;
     }).join('');
   }
+
+
+  // 通道用量
+  const us = d.usage || {};
+  const ub = document.getElementById('usage-body');
+  const q0 = us.today?.qoder || {}, j0 = us.today?.joycode || {};
+  const qa = us.total?.qoder || {}, ja = us.total?.joycode || {};
+  const z = { requests: 0, prompt: 0, completion: 0, failed: 0 };
+  const mk = (name, cls, a, b) => `<tr>
+      <td><span class="pill ${cls}">${name}</span></td>
+      <td class="num">${(a.requests||0)}</td>
+      <td class="num">${(a.prompt||0).toLocaleString('zh-CN')}</td>
+      <td class="num">${(a.completion||0).toLocaleString('zh-CN')}</td>
+      <td class="num">${(b.requests||0)}</td>
+      <td class="num">${(b.completion||0).toLocaleString('zh-CN')}</td>
+      <td class="num">${(a.failed||0)}</td>
+    </tr>`;
+  ub.innerHTML = mk('Qoder', 'q', q0, qa) + mk('JoyCode', 'j', j0, ja);
 
   drawModels();
 
