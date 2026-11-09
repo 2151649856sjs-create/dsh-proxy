@@ -1,0 +1,327 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>双通道 AI 网关 · 总览</title>
+<style>
+  :root{
+    --bg:#f5f6fa; --card:#ffffff; --line:#e6e8f0; --text:#161a22; --muted:#6b7280;
+    --accent:#4f46e5; --accent-soft:#eef0ff; --green:#0f9d63; --green-soft:#e7f7ef;
+    --amber:#c2740a; --amber-soft:#fdf3e3; --red:#d33a3a; --red-soft:#fdecec;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{background:var(--bg);color:var(--text);font-family:-apple-system,"Segoe UI","Microsoft YaHei",sans-serif;padding:28px 20px 48px;line-height:1.55}
+  .wrap{max-width:1120px;margin:0 auto}
+  header{display:flex;align-items:flex-end;justify-content:space-between;gap:16px;margin-bottom:22px;flex-wrap:wrap}
+  h1{font-size:22px;letter-spacing:-.2px}
+  .sub{color:var(--muted);font-size:13px;margin-top:4px}
+  .chip{display:inline-flex;align-items:center;gap:6px;font-size:12px;padding:5px 11px;border-radius:999px;border:1px solid var(--line);background:#fff;color:var(--muted)}
+  .dot{width:7px;height:7px;border-radius:50%;background:var(--green);box-shadow:0 0 0 3px var(--green-soft)}
+  .dot.warn{background:var(--amber);box-shadow:0 0 0 3px var(--amber-soft)}
+  .dot.bad{background:var(--red);box-shadow:0 0 0 3px var(--red-soft)}
+  button.refresh{border:1px solid var(--line);background:#fff;border-radius:8px;padding:6px 12px;font-size:13px;color:var(--text);cursor:pointer}
+  button.refresh:hover{border-color:#c9cde0;background:#fafbff}
+
+  /* 链路图 */
+  .chain{display:grid;grid-template-columns:1fr 96px 1fr 96px 1.15fr;align-items:center;gap:0;margin-bottom:22px}
+  .node{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:16px 18px;box-shadow:0 1px 2px rgba(20,25,40,.04)}
+  .node .label{font-size:11px;letter-spacing:.08em;color:var(--muted);text-transform:uppercase}
+  .node .name{font-size:15px;font-weight:650;margin-top:5px}
+  .node .meta{font-size:12px;color:var(--muted);margin-top:3px}
+  .node.accent{border-color:#cfd3f7;background:linear-gradient(180deg,#fbfbff,#f3f4ff)}
+  .node.up{display:flex;flex-direction:column;gap:10px;background:transparent;border:none;box-shadow:none;padding:0}
+  .node.up .mini{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:11px 14px}
+  .arrow{position:relative;height:2px;background:linear-gradient(90deg,#d7daea,#b9bee0);margin:0 12px;border-radius:2px}
+  .arrow::after{content:"";position:absolute;right:-1px;top:-4px;border-left:8px solid #b9bee0;border-top:5px solid transparent;border-bottom:5px solid transparent}
+  .arrow.left{background:linear-gradient(90deg,#b9bee0,#d7daea)}
+  .arrow.left::after{display:none}
+  .arrow.left::before{content:"";position:absolute;left:-1px;top:-4px;border-right:8px solid #b9bee0;border-top:5px solid transparent;border-bottom:5px solid transparent}
+
+  /* KPI */
+  .kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px;margin-bottom:26px}
+  .kpi{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:16px 18px}
+  .kpi .k{font-size:12px;color:var(--muted)}
+  .kpi .v{font-size:28px;font-weight:680;letter-spacing:-.5px;margin-top:6px;font-variant-numeric:tabular-nums}
+  .kpi .v small{font-size:13px;font-weight:500;color:var(--muted);margin-left:3px}
+
+  h2{font-size:15px;margin:0 0 10px;display:flex;align-items:center;gap:8px}
+  h2 .count{font-size:12px;font-weight:500;color:var(--muted);background:#eef0f6;border-radius:999px;padding:2px 8px}
+  section{margin-bottom:26px}
+  .panel{background:var(--card);border:1px solid var(--line);border-radius:14px;overflow:hidden}
+  table{width:100%;border-collapse:collapse;font-size:13.5px}
+  th{text-align:left;font-weight:600;font-size:12px;color:var(--muted);background:#fafbfe;padding:10px 16px;border-bottom:1px solid var(--line)}
+  td{padding:11px 16px;border-bottom:1px solid #f0f1f7;vertical-align:middle}
+  tr:last-child td{border-bottom:none}
+  .mono{font-family:ui-monospace,SFMono-Regular,Consolas,monospace;font-size:12.5px;color:#4b5563}
+  .pill{display:inline-block;font-size:11.5px;padding:2px 9px;border-radius:999px;border:1px solid transparent;white-space:nowrap}
+  .pill.q{background:var(--accent-soft);color:#4338ca;border-color:#dcdffb}
+  .pill.j{background:var(--green-soft);color:#0b7a4d;border-color:#cdecdc}
+  .pill.ok{background:var(--green-soft);color:#0b7a4d}
+  .pill.idle{background:#f1f2f7;color:#6b7280}
+  .bar{height:6px;background:#eef0f6;border-radius:99px;overflow:hidden;min-width:90px}
+  .bar > i{display:block;height:100%;border-radius:99px;background:linear-gradient(90deg,#6366f1,#8b5cf6)}
+  .bar.low > i{background:linear-gradient(90deg,#f0b429,#dd8b09)}
+  .bar.empty > i{background:#d7dae5}
+  td .num{font-variant-numeric:tabular-nums}
+  .flex{display:flex;align-items:center;gap:10px}
+  .rules{display:grid;grid-template-columns:repeat(auto-fit,minmax(250px,1fr));gap:12px}
+  .rule{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px 16px}
+  .rule .t{font-size:13px;font-weight:650;margin-bottom:4px}
+  .rule .d{font-size:12.5px;color:var(--muted)}
+  .toolbar{display:flex;gap:10px;align-items:center;margin-bottom:10px;flex-wrap:wrap}
+  input[type=search]{border:1px solid var(--line);background:#fff;border-radius:8px;padding:7px 12px;font-size:13px;width:220px;outline:none}
+  input[type=search]:focus{border-color:#b9bee0;box-shadow:0 0 0 3px #eef0ff}
+  .filter{display:flex;gap:6px}
+  .filter button{border:1px solid var(--line);background:#fff;border-radius:8px;padding:6px 11px;font-size:12.5px;color:var(--muted);cursor:pointer}
+  .filter button.on{background:var(--accent-soft);border-color:#dcdffb;color:#4338ca}
+  footer{color:var(--muted);font-size:12px;text-align:center;margin-top:8px}
+  .note{background:var(--amber-soft);border:1px solid #f4dfba;color:#8a5a05;border-radius:10px;padding:10px 14px;font-size:12.5px;margin-bottom:18px;display:none}
+  @media(max-width:860px){
+    .chain{grid-template-columns:1fr;gap:10px}
+    .arrow{height:26px;width:2px;background:linear-gradient(180deg,#d7daea,#b9bee0);margin:0 auto}
+    .arrow::after{right:auto;left:-4px;top:auto;bottom:-1px;border-left:5px solid transparent;border-right:5px solid transparent;border-top:8px solid #b9bee0;border-bottom:none}
+    .arrow.left::before{display:none}
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div>
+      <h1>双通道 AI 网关 · 总览</h1>
+      <div class="sub">DSH 单入口 127.0.0.1:8320 · Qoder 与 JoyCode 两份额度按模型名自动分流</div>
+    </div>
+    <div class="flex">
+      <span class="chip"><span class="dot" id="dot"></span><span id="mode">读取中…</span></span>
+      <button class="refresh" onclick="load()">刷新</button>
+    </div>
+  </header>
+
+  <div class="note" id="note">当前显示的是内置示例数据（浏览器无法访问你本机服务时使用）。在本机打开可看到实时数据。</div>
+
+  <div class="chain">
+    <div class="node">
+      <div class="label">Client</div>
+      <div class="name">DSH</div>
+      <div class="meta">Base URL 指向网关</div>
+    </div>
+    <div class="arrow"></div>
+    <div class="node accent">
+      <div class="label">Gateway</div>
+      <div class="name">合并网关 · 8320</div>
+      <div class="meta"><span id="routes">18</span> 条模型路由</div>
+    </div>
+    <div class="arrow"></div>
+    <div class="node up">
+      <div class="mini">
+        <div class="flex" style="justify-content:space-between">
+          <div><div class="name" style="margin:0">Qoder · 8790</div><div class="meta" id="q-meta">—</div></div>
+          <span class="pill ok" id="q-pill">—</span>
+        </div>
+      </div>
+      <div class="mini">
+        <div class="flex" style="justify-content:space-between">
+          <div><div class="name" style="margin:0">JoyCode · 8318</div><div class="meta" id="j-meta">—</div></div>
+          <span class="pill ok" id="j-pill">—</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="kpis">
+    <div class="kpi"><div class="k">可用模型</div><div class="v" id="k-models">18<small>个</small></div></div>
+    <div class="kpi"><div class="k">上游在线</div><div class="v" id="k-up">2<small>/2</small></div></div>
+    <div class="kpi"><div class="k">Qoder 账号</div><div class="v" id="k-acct">2<small>/2 就绪</small></div></div>
+    <div class="kpi"><div class="k">剩余积分</div><div class="v" id="k-credit">500<small>点</small></div></div>
+  </div>
+
+  <section>
+    <h2>Qoder 账号池 <span class="count" id="acct-count">2</span></h2>
+    <div class="panel">
+      <table>
+        <thead><tr><th>账号</th><th>通道</th><th>剩余积分</th><th>已用</th><th>状态</th></tr></thead>
+        <tbody id="acct-body"></tbody>
+      </table>
+    </div>
+  </section>
+
+  <section>
+    <h2>模型路由表 <span class="count" id="model-count">18</span></h2>
+    <div class="toolbar">
+      <input type="search" id="q" placeholder="搜模型名…" oninput="drawModels()">
+      <div class="filter">
+        <button class="on" data-f="all" onclick="setFilter('all')">全部</button>
+        <button data-f="qoder" onclick="setFilter('qoder')">Qoder</button>
+        <button data-f="joycode" onclick="setFilter('joycode')">JoyCode</button>
+      </div>
+    </div>
+    <div class="panel">
+      <table>
+        <thead><tr><th style="width:46%">模型 ID</th><th>通道</th><th>说明</th></tr></thead>
+        <tbody id="model-body"></tbody>
+      </table>
+    </div>
+  </section>
+
+  <section>
+    <h2>自动切换机制</h2>
+    <div class="rules">
+      <div class="rule"><div class="t">会话亲和</div><div class="d">同一会话粘住上次成功的账号，不会一个对话到处跳。</div></div>
+      <div class="rule"><div class="t">额度耗尽 → 换号</div><div class="d">上游返回额度类 403 时，该号进长冷却，立刻换下一个号重试同一请求。</div></div>
+      <div class="rule"><div class="t">票据失效 → 禁用</div><div class="d">TOKEN_EXPIRE 时直接把该号禁用并写回账号文件，后续请求不再选它。</div></div>
+      <div class="rule"><div class="t">排队 / 超时 → 转移</div><div class="d">上游排队（10605）不惩罚账号；首字超时直接换号，同号重试没意义。</div></div>
+    </div>
+  </section>
+
+  <footer id="foot">—</footer>
+</div>
+
+<script>
+const SNAPSHOT = {
+  ts: "",
+  gateway: { port: 8320, routes: 18, fallback: "qoder" },
+  upstreams: {
+    qoder:   { url: "http://127.0.0.1:8790", ok: true, accounts: 2, accounts_ready: 2, expires_at: null },
+    joycode: { url: "http://127.0.0.1:8318", ok: true, models: 5, credential_ok: true, chat_access: true }
+  },
+  credits: { total_remain: 500, accounts_count: 2, accounts: [
+    { uid: "demo-account-a", nickname: "示例账号 A", credits: 300, used: 120 },
+    { uid: "demo-account-b", nickname: "示例账号 B", credits: 200, used: 60 }
+  ]},
+  routes: [
+    { model: "Auto", upstream: "qoder" }, { model: "Qwen3.8-Max", upstream: "qoder" },
+    { model: "Qwen3.8-Flash", upstream: "qoder" }, { model: "DeepSeek-V4-Pro", upstream: "qoder" },
+    { model: "DeepSeek-Flash", upstream: "qoder" }, { model: "GLM-5.3", upstream: "qoder" },
+    { model: "GLM-5.3-Flash", upstream: "qoder" }, { model: "Kimi-K3.1-Pro", upstream: "qoder" },
+    { model: "Kimi-K2.8-Preview", upstream: "qoder" }, { model: "MiniMax-M3.1-Flash", upstream: "qoder" },
+    { model: "QoDuck", upstream: "qoder" }, { model: "Fast", upstream: "qoder" },
+    { model: "Step-5-Preview", upstream: "qoder" }, { model: "JoyAI-Code-1.6", upstream: "joycode" },
+    { model: "GLM-5.3-agent", upstream: "joycode" }, { model: "Kimi-K2.6-agent", upstream: "joycode" },
+    { model: "MiniMax-M3-agent", upstream: "joycode" }, { model: "Doubao-Seed-2.0-pro-agent", upstream: "joycode" }
+  ]
+};
+
+const DESC = {
+  "Auto": "自动挑选，平衡性能与成本",
+  "Qwen3.8-Max": "通义旗舰",
+  "Qwen3.8-Flash": "通义极速",
+  "DeepSeek-V4-Pro": "DeepSeek 旗舰",
+  "DeepSeek-Flash": "DeepSeek 快速档",
+  "GLM-5.3": "智谱旗舰（Qoder 通道）",
+  "GLM-5.3-Flash": "智谱快速档",
+  "Kimi-K3.1-Pro": "月之暗面旗舰",
+  "Kimi-K2.8-Preview": "月之暗面预览",
+  "MiniMax-M3.1-Flash": "MiniMax 快速档",
+  "QoDuck": "轻量问答",
+  "Fast": "极速通道",
+  "Step-5-Preview": "阶跃预览",
+  "JoyAI-Code-1.6": "京东自研代码模型",
+  "GLM-5.3-agent": "智谱旗舰（JoyCode 通道）",
+  "Kimi-K2.6-agent": "月之暗面（JoyCode 通道）",
+  "MiniMax-M3-agent": "MiniMax（JoyCode 通道）",
+  "Doubao-Seed-2.0-pro-agent": "豆包旗舰（JoyCode 通道）"
+};
+
+let DATA = null, FILTER = 'all';
+
+function fmt(n){ return n == null ? '—' : Number(n).toLocaleString('zh-CN'); }
+function expText(ts){
+  if(!ts) return '—';
+  const d = new Date(ts * 1000), now = new Date();
+  const days = Math.ceil((d - now) / 86400000);
+  return `${d.getMonth()+1}月${d.getDate()}日（${days > 0 ? days + ' 天' : '已过期'}）`;
+}
+
+function render(d, mode){
+  DATA = d;
+  document.getElementById('note').style.display = mode === 'live' ? 'none' : 'block';
+  const dot = document.getElementById('dot'), chip = document.getElementById('mode');
+  dot.className = 'dot' + (mode === 'live' ? '' : ' warn');
+  chip.textContent = mode === 'live' ? '实时数据' : '示例数据';
+
+  const q = d.upstreams?.qoder || {}, j = d.upstreams?.joycode || {};
+  document.getElementById('q-meta').textContent = q.ok ? `${q.accounts_ready ?? '—'}/${q.accounts ?? '—'} 账号就绪` : (q.error || '不可达');
+  document.getElementById('j-meta').textContent = j.ok ? `${j.models ?? '—'} 个模型 · ${j.chat_access ? '可对话' : '仅凭据有效'}` : (j.error || '不可达');
+  document.getElementById('q-pill').textContent = q.ok ? '在线' : '离线';
+  document.getElementById('q-pill').className = 'pill ' + (q.ok ? 'ok' : 'idle');
+  document.getElementById('j-pill').textContent = j.ok ? '在线' : '离线';
+  document.getElementById('j-pill').className = 'pill ' + (j.ok ? 'ok' : 'idle');
+
+  const routes = d.routes || [];
+  document.getElementById('routes').textContent = d.gateway?.routes ?? routes.length;
+  document.getElementById('k-models').innerHTML = (routes.length || 18) + '<small>个</small>';
+  const upOk = (q.ok ? 1 : 0) + (j.ok ? 1 : 0);
+  document.getElementById('k-up').innerHTML = upOk + '<small>/2</small>';
+  const accts = d.credits?.accounts || [];
+  const ready = q.accounts_ready ?? accts.length;
+  document.getElementById('k-acct').innerHTML = `${q.accounts ?? accts.length}<small>/${ready} 就绪</small>`;
+  document.getElementById('k-credit').innerHTML = `${fmt(d.credits?.total_remain)}<small>点</small>`;
+
+  // 账号表
+  const body = document.getElementById('acct-body');
+  document.getElementById('acct-count').textContent = accts.length || '—';
+  if (!accts.length){
+    body.innerHTML = '<tr><td colspan="5" style="color:#6b7280">没有读到账号数据（上游不可达或接口未开放）</td></tr>';
+  } else {
+    const maxCredit = Math.max(...accts.map(a => a.credits || 0), 1);
+    body.innerHTML = accts.map(a => {
+      const c = a.credits ?? 0;
+      const cls = c <= 20 ? 'low' : '';
+      const pct = Math.max(3, Math.round(c / maxCredit * 100));
+      return `<tr>
+        <td><div style="font-weight:600">${a.nickname || '—'}</div><div class="mono">${(a.uid || '').slice(0, 8)}</div></td>
+        <td><span class="pill q">Qoder</span></td>
+        <td><div class="flex"><div class="bar ${cls}" style="width:110px"><i style="width:${pct}%"></i></div><span class="num">${fmt(c)}</span></div></td>
+        <td class="num">${fmt(a.used)}</td>
+        <td><span class="pill ${c > 0 ? 'ok' : 'idle'}">${c > 0 ? '可用' : '耗尽'}</span></td>
+      </tr>`;
+    }).join('');
+  }
+
+  drawModels();
+
+  const ts = d.ts ? new Date(d.ts) : new Date();
+  document.getElementById('foot').textContent =
+    `数据时间 ${ts.toLocaleString('zh-CN')} · 来源 ${mode === 'live' ? '本机 8320/panel/api/status' : '内置示例'} · 余额查询走 Qoder /credits/summary`;
+}
+
+function setFilter(f){
+  FILTER = f;
+  document.querySelectorAll('.filter button').forEach(b => b.classList.toggle('on', b.dataset.f === f));
+  drawModels();
+}
+
+function drawModels(){
+  if (!DATA) return;
+  const kw = (document.getElementById('q').value || '').trim().toLowerCase();
+  let rows = (DATA.routes || []).filter(r =>
+    (FILTER === 'all' || r.upstream === FILTER) &&
+    (!kw || r.model.toLowerCase().includes(kw)));
+  document.getElementById('model-count').textContent = rows.length;
+  document.getElementById('model-body').innerHTML = rows.map(r => `
+    <tr>
+      <td class="mono">${r.model}</td>
+      <td><span class="pill ${r.upstream === 'qoder' ? 'q' : 'j'}">${r.upstream === 'qoder' ? 'Qoder' : 'JoyCode'}</span></td>
+      <td style="color:#6b7280">${DESC[r.model] || '—'}</td>
+    </tr>`).join('') || '<tr><td colspan="3" style="color:#6b7280">没有匹配的模型</td></tr>';
+}
+
+async function load(){
+  document.getElementById('mode').textContent = '读取中…';
+  try {
+    const ctl = new AbortController();
+    const t = setTimeout(() => ctl.abort(), 5000);
+    const r = await fetch('http://127.0.0.1:8320/panel/api/status', { signal: ctl.signal, cache: 'no-store' });
+    clearTimeout(t);
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    render(await r.json(), 'live');
+  } catch (e) {
+    render(SNAPSHOT, 'snapshot');
+  }
+}
+load();
+setInterval(() => { if (document.getElementById('mode').textContent === '实时数据') load(); }, 30000);
+</script>
+</body>
+</html>
