@@ -17,7 +17,7 @@ goto notrunning
 :running
 echo [状态] 正在运行
 echo.
-echo   1. 打开看板 (http://127.0.0.1:8320/panel)
+echo   1. 打开状态检查 (http://127.0.0.1:8320/health)
 echo   2. 重启
 echo   3. 停止
 echo   4. 关闭窗口
@@ -38,7 +38,7 @@ if /i "%CH%"=="n" goto end
 goto start
 
 :panel
-start "" http://127.0.0.1:8320/panel
+start "" http://127.0.0.1:8320/health
 goto end
 
 :restart
@@ -62,11 +62,11 @@ echo.
 echo 启动命令已发出（网关在后台跑，关窗口不影响）。
 echo 等几秒后访问：
 echo   接口  http://127.0.0.1:8320/v1
-echo   看板  http://127.0.0.1:8320/panel
+echo   状态  http://127.0.0.1:8320/health
 echo.
-echo 要不要现在打开看板？(y/n)
+echo 要不要现在打开状态检查？(y/n)
 set /p OP=你的选择: 
-if /i "%OP%"=="y" start "" http://127.0.0.1:8320/panel
+if /i "%OP%"=="y" start "" http://127.0.0.1:8320/health
 echo.
 echo 按任意键关闭。
 pause >nul

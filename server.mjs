@@ -233,67 +233,14 @@ const server = http.createServer(async (req, res) => {
       return void sendJson(res, 200, { object: 'list', data: merged }, cors);
     }
 
-    // ---- 看板页面（同目录 panel.html，浏览器打开 http://127.0.0.1:8320/panel） ----
-    if (u.pathname === '/' || u.pathname === '/panel' || u.pathname === '/panel/') {
-      try {
-        const html = readFileSync(join(__dirname, 'panel.html'));
-        res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', ...cors });
-        return res.end(html);
-      } catch {
-        return void sendJson(res, 404, { error: { message: 'panel.html 不存在（看板页面未随项目部署）', type: 'gateway_panel_missing' } }, cors);
-      }
-    }
-
-    // ---- 看板聚合数据（一次拿全：网关/上游/账号/积分/路由表） ----
-    if (u.pathname === '/panel/api/status' || u.pathname === '/api/status') {
-      await syncRoutes();
-      const out = {
-        ts: new Date().toISOString(),
-        gateway: { port: CFG.port, routes: routeTable.size, fallback: CFG.fallback },
-        upstreams: {},
-        credits: null,
-        usage: USAGE,
-        routes: [...routeTable.entries()].map(([m, up]) => ({ model: m, upstream: up })),
-      };
-      for (const [name, base] of Object.entries(UPSTREAMS)) {
-        try {
-          const r = await fetch(base + '/health', { signal: AbortSignal.timeout(6000) });
-          const h = await r.json();
-          out.upstreams[name] = {
-            url: base,
-            ok: h.ok === true || h.status === 'ok',
-            models: h.models ?? null,
-            accounts: h.accounts ?? null,
-            accounts_ready: h.accounts_ready ?? null,
-            credential_ok: h.credential_ok ?? null,
-            chat_access: h.chat_access ?? null,
-            expires_at: h.expires_at ?? null,
-          };
-        } catch (e) {
-          out.upstreams[name] = {
-            url: base,
-            ok: false,
-            error: e.name === 'TimeoutError' ? '探测超时' : (e.cause?.code || e.message),
-          };
-        }
-      }
-      try {
-        const r = await fetch(CFG.qoder + '/credits/summary', { signal: AbortSignal.timeout(10000) });
-        const c = await r.json();
-        out.credits = {
-          total_remain: c?.totals?.remain ?? null,
-          accounts_count: c?.totals?.accounts ?? null,
-          accounts: (c?.accounts || []).map(a => ({
-            uid: a.uid,
-            nickname: a.nickname,
-            credits: a.credits_remain_effective ?? a.credits_remain ?? null,
-            used: a.credits_used ?? null,
-          })),
-        };
-      } catch (e) {
-        out.credits = { error: e.name === 'TimeoutError' ? '超时' : (e.cause?.code || e.message) };
-      }
-      return void sendJson(res, 200, out, cors);
+    // ---- 根路径：只回一个最小状态（看板已移除） ----
+    if (u.pathname === '/') {
+      return void sendJson(res, 200, {
+        status: 'ok',
+        service: 'qoder-joycode-gateway',
+        routes: routeTable.size,
+        upstreams: Object.keys(UPSTREAMS),
+      }, cors);
     }
 
     // ---- 其余请求：读 body，按模型分流 ----
