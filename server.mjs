@@ -1,8 +1,8 @@
 // ============================================================
-// Qoder + JoyCode 合并网关（零依赖，Node 18+）
-// 用途：把两份反代额度合成一个入口给 DSH 用。
+// Qoder + JoyCode + DeepAI 合并网关（零依赖，Node 18+）
+// 用途：把三份反代额度合成一个入口给 DSH 用。
 //   DSH 只配 http://127.0.0.1:8320/v1
-//   网关按模型名自动分流到 Qoder(8790) 或 JoyCode(8318)
+//   网关按模型名自动分流到 Qoder(8790) / JoyCode(8318) / DeepAI(8791)
 // 配置：同目录 .env（说明见 使用说明.txt）
 // ============================================================
 import http from 'node:http';
@@ -25,10 +25,16 @@ const CFG = {
   port:      parseInt(process.env.GATEWAY_PORT || '8320', 10),
   qoder:     (process.env.QODER_BASE || 'http://127.0.0.1:8790').replace(/\/+$/, ''),
   joycode:   (process.env.JOYCODE_BASE || 'http://127.0.0.1:8318').replace(/\/+$/, ''),
+  deepai:    (process.env.DEEPAI_BASE || '').replace(/\/+$/, ''),
   fallback:  (process.env.DEFAULT_UPSTREAM || 'qoder').toLowerCase(),
   cors:      process.env.CORS_ORIGINS || '*',
   timeoutMs: parseInt(process.env.TIMEOUT_MS || '300000', 10),
   clientKey: process.env.REQUIRE_CLIENT_KEY || '',
+  // 自动降级：主模型失败（额度/排队/超时/拒权）时按链换模型重试
+  failover:      (process.env.FAILOVER || '1') !== '0',
+  failoverMs:    parseInt(process.env.FAILOVER_TIMEOUT_MS || '25000', 10),
+  failoverChain: (process.env.FAILOVER_CHAIN || 'gpt-6-luna,GLM-5.3-agent,GLM-5.3')
+                   .split(',').map(s => s.trim()).filter(Boolean),
   log:       (process.env.LOG_REQUESTS || '1') !== '0',
 };
 let manualMap = {};
@@ -38,6 +44,7 @@ catch { console.error('[gateway] MODEL_MAP 不是合法 JSON，已忽略'); manu
 const UPSTREAMS = {
   qoder:   CFG.qoder,
   joycode: CFG.joycode,
+  ...(CFG.deepai ? { deepai: CFG.deepai } : {}),
 };
 
 // ---------- 按通道的用量记账（JoyCode 上游不返回余额，只能看消耗） ----------
@@ -46,22 +53,22 @@ const todayStr = () => new Date().toISOString().slice(0, 10);
 const emptyBucket = () => ({ requests: 0, prompt: 0, completion: 0, failed: 0 });
 let USAGE = {
   date: todayStr(),
-  today: { qoder: emptyBucket(), joycode: emptyBucket() },
-  total: { qoder: emptyBucket(), joycode: emptyBucket() },
+  today: { qoder: emptyBucket(), joycode: emptyBucket(), ...(CFG.deepai ? { deepai: emptyBucket() } : {}) },
+  total: { qoder: emptyBucket(), joycode: emptyBucket(), ...(CFG.deepai ? { deepai: emptyBucket() } : {}) },
 };
 try {
   if (existsSync(USAGE_FILE)) {
     const u = JSON.parse(readFileSync(USAGE_FILE, 'utf-8'));
     if (u && u.total) {
       USAGE = u;
-      if (USAGE.date !== todayStr()) { USAGE.date = todayStr(); USAGE.today = { qoder: emptyBucket(), joycode: emptyBucket() }; }
+      if (USAGE.date !== todayStr()) { USAGE.date = todayStr(); USAGE.today = { qoder: emptyBucket(), joycode: emptyBucket(), ...(CFG.deepai ? { deepai: emptyBucket() } : {}) }; }
     }
   }
 } catch { /* 账本坏了就从零开始，不影响转发 */ }
 
 function recordUsage(upstream, { prompt = 0, completion = 0, ok = true } = {}) {
   if (!USAGE.today[upstream]) return;
-  if (USAGE.date !== todayStr()) { USAGE.date = todayStr(); USAGE.today = { qoder: emptyBucket(), joycode: emptyBucket() }; }
+  if (USAGE.date !== todayStr()) { USAGE.date = todayStr(); USAGE.today = { qoder: emptyBucket(), joycode: emptyBucket(), ...(CFG.deepai ? { deepai: emptyBucket() } : {}) }; }
   for (const bucket of [USAGE.today[upstream], USAGE.total[upstream]]) {
     bucket.requests += 1;
     bucket.prompt += prompt || 0;
@@ -114,7 +121,7 @@ let syncing = null;
 
 async function fetchModels(name) {
   const base = UPSTREAMS[name];
-  const r = await fetch(base + '/v1/models', { signal: AbortSignal.timeout(8000) });
+  const r = await fetch(base + '/v1/models', { signal: AbortSignal.timeout(20000) });
   if (!r.ok) throw new Error('HTTP ' + r.status);
   const d = await r.json();
   const list = Array.isArray(d?.data) ? d.data : [];
@@ -125,6 +132,7 @@ async function syncRoutes(force = false) {
   if (!force && Date.now() - lastSync < 120000) return;
   if (syncing) return syncing;
   syncing = (async () => {
+    const prev = new Map(routeTable);
     routeTable.clear();
     for (const [name] of Object.entries(UPSTREAMS)) {
       try {
@@ -134,14 +142,16 @@ async function syncRoutes(force = false) {
         console.error('[gateway] 拉取 ' + name + ' 模型列表失败:', e.message);
       }
     }
+    // 本轮没拉到的，沿用上次的映射（上游临时故障不清空路由）
+    for (const [m, up] of prev) if (!routeTable.has(m)) routeTable.set(m, up);
     // 手工映射优先
     for (const [model, up] of Object.entries(manualMap)) {
       if (UPSTREAMS[up]) routeTable.set(model, up);
     }
     lastSync = Date.now();
-    console.log('[gateway] 路由表已刷新: qoder=' +
-      [...routeTable.values()].filter(v => v === 'qoder').length + ' 个, joycode=' +
-      [...routeTable.values()].filter(v => v === 'joycode').length + ' 个');
+    const counts = Object.keys(UPSTREAMS).map(n =>
+      n + '=' + [...routeTable.values()].filter(v => v === n).length + ' 个').join(', ');
+    console.log('[gateway] 路由表已刷新: ' + counts);
   })().finally(() => { syncing = null; });
   return syncing;
 }
@@ -217,7 +227,7 @@ const server = http.createServer(async (req, res) => {
       const merged = [];
       for (const [name, base] of Object.entries(UPSTREAMS)) {
         try {
-          const r = await fetch(base + '/v1/models', { signal: AbortSignal.timeout(8000) });
+          const r = await fetch(base + '/v1/models', { signal: AbortSignal.timeout(20000) });
           const d = await r.json();
           for (const m of (Array.isArray(d?.data) ? d.data : [])) {
             const id = typeof m === 'string' ? m : m?.id;
@@ -287,13 +297,64 @@ const server = http.createServer(async (req, res) => {
       fwd[k] = Array.isArray(v) ? v.join(', ') : v;
     }
 
-    const outUrl = UPSTREAMS[target] + u.pathname + (u.search || '');
-    const ac = new AbortController();
-    const timer = setTimeout(() => ac.abort(), CFG.timeoutMs);
-    let upstream;
-    try {
-      upstream = await fetch(outUrl, { method: req.method, headers: fwd, body: reqBody, signal: ac.signal, redirect: 'manual' });
-    } finally { clearTimeout(timer); }
+    // ---- 自动降级：按 [原模型, ...降级链] 依次尝试 ----
+    const isChatPath = u.pathname.includes('/chat/completions');
+    const attempts = [model];
+    if (isChatPath && CFG.failover) {
+      for (const m of CFG.failoverChain) if (m && !attempts.includes(m)) attempts.push(m);
+    }
+
+    let upstream = null, usedModel = model, usedTarget = target, lastStatus = 0, lastErr = '';
+
+    for (let i = 0; i < attempts.length; i++) {
+      const attemptModel = attempts[i];
+      let upTarget = target, bare = attemptModel;
+
+      if (i > 0) {                                   // 降级链上的模型：重新解析路由
+        let f2 = '';
+        if (bare.includes('/')) {
+          const ix = bare.indexOf('/');
+          const p2 = bare.slice(0, ix).toLowerCase();
+          if (UPSTREAMS[p2]) { f2 = p2; bare = bare.slice(ix + 1); }
+        }
+        await syncRoutes();
+        upTarget = f2 || routeTable.get(bare) || '';
+        if (!upTarget) {
+          if (CFG.log) console.error('[gateway] 降级跳过（无路由）: ' + bare);
+          continue;
+        }
+      }
+
+      let body = reqBody;
+      if (body && isChatPath) {                      // 改写 body 里的 model
+        try {
+          const j = JSON.parse(body.toString('utf-8'));
+          j.model = bare;
+          body = Buffer.from(JSON.stringify(j), 'utf-8');
+        } catch {}
+      }
+
+      const ac = new AbortController();
+      const budget = attempts.length > 1 ? CFG.failoverMs : CFG.timeoutMs;
+      const timer = setTimeout(() => ac.abort(), budget);
+      try {
+        const resp = await fetch(UPSTREAMS[upTarget] + u.pathname + (u.search || ''), {
+          method: req.method, headers: fwd, body, signal: ac.signal, redirect: 'manual',
+        });
+        if (resp.ok || i === attempts.length - 1) {
+          upstream = resp; usedModel = bare; usedTarget = upTarget;
+          break;
+        }
+        lastStatus = resp.status;
+        try { lastErr = (await resp.text()).slice(0, 300); } catch {}
+        if (CFG.log) console.error('[gateway] 降级: ' + bare + '@' + upTarget + ' HTTP ' + resp.status + ' ' + lastErr.slice(0, 120));
+      } catch (e) {
+        lastStatus = e.name === 'AbortError' ? 504 : 502;
+        lastErr = e.name === 'AbortError' ? '超时(' + budget + 'ms)' : String(e.cause?.code || e.message);
+        if (CFG.log) console.error('[gateway] 降级: ' + bare + '@' + upTarget + ' ' + lastErr);
+        if (i === attempts.length - 1) throw e;
+      } finally { clearTimeout(timer); }
+    }
 
     const resHeaders = {};
     for (const [k, v] of upstream.headers) {
@@ -303,7 +364,9 @@ const server = http.createServer(async (req, res) => {
     const cookies = typeof upstream.headers.getSetCookie === 'function' ? upstream.headers.getSetCookie() : [];
     if (cookies.length) resHeaders['set-cookie'] = cookies;
     Object.assign(resHeaders, cors);
-    resHeaders['x-gateway-upstream'] = target;
+    resHeaders['x-gateway-upstream'] = usedTarget;
+    resHeaders['x-gateway-model'] = usedModel;
+    if (usedModel !== model) resHeaders['x-gateway-fallback'] = '1';
     res.writeHead(upstream.status, resHeaders);
     // 边转发边攒一段文本，事后从中抠 usage（流式取 SSE 尾巴，非流式取整个 JSON）
     const dec = new TextDecoder();
@@ -318,9 +381,9 @@ const server = http.createServer(async (req, res) => {
     res.end();
     if (isChat) {
       const u2 = extractUsage(seen);
-      recordUsage(target, { prompt: u2.prompt, completion: u2.completion, ok: upstream.ok });
+      recordUsage(usedTarget, { prompt: u2.prompt, completion: u2.completion, ok: upstream.ok });
     }
-    if (CFG.log) console.log(req.method + ' ' + u.pathname + ' [' + (model || '-') + ' -> ' + target + '] ' + upstream.status + ' ' + (Date.now() - t0) + 'ms');
+    if (CFG.log) console.log(req.method + ' ' + u.pathname + ' [' + (model || '-') + ' -> ' + usedModel + '@' + usedTarget + (usedModel !== model ? ' 降级' : '') + '] ' + upstream.status + ' ' + (Date.now() - t0) + 'ms');
 
   } catch (e) {
     const status = e.name === 'AbortError' ? 504 : 502;
@@ -341,6 +404,6 @@ process.on('uncaughtException', e => console.error('[gateway] 未捕获异常（
 
 server.listen(CFG.port, CFG.host, async () => {
   console.log('[gateway] 已启动: http://' + CFG.host + ':' + CFG.port);
-  console.log('[gateway] 上游 Qoder: ' + CFG.qoder + ' | JoyCode: ' + CFG.joycode);
+  console.log('[gateway] 上游: ' + Object.entries(UPSTREAMS).map(([n, b]) => n + ' ' + b).join(' | '));
   await syncRoutes(true);
 });
