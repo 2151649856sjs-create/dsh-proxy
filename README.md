@@ -68,9 +68,14 @@ Windows 用户也可以直接双击 `启动dsh反代.bat`（前台运行，关�
 | `GATEWAY_PORT` | `8320` | 监听端口 |
 | `QODER_BASE` | `http://127.0.0.1:8790` | Qoder 上游地址 |
 | `JOYCODE_BASE` | `http://127.0.0.1:8318` | JoyCode 上游地址 |
+| `DEEPAI_BASE` | 空 | 可选的第三个上游（如 DeepAI 反代 8791），留空则不启用 |
+| `OPENCODE_BASE` | 空 | 可选的第四个上游（OpenCode 免费模型池 8319），留空则不启用 |
 | `DEFAULT_UPSTREAM` | `qoder` | 模型名认不出来时默认给谁 |
 | `CORS_ORIGINS` | `*` | 允许来源，`*` 或逗号分隔白名单 |
 | `TIMEOUT_MS` | `300000` | 上游超时（只管到拿到响应头，长回复/流式不会被掐） |
+| `FAILOVER` | `1` | 主模型失败时按链换模型重试 |
+| `FAILOVER_TIMEOUT_MS` | `25000` | 单次尝试超时，超时即换下一个 |
+| `FAILOVER_CHAIN` | 见 .env | 降级链，建议把免费/稳定模型放后面 |
 | `REQUIRE_CLIENT_KEY` | 空 | 设了就校验客户端 key（`Authorization: Bearer xxx` 或 `x-api-key`），留空不校验 |
 | `MODEL_MAP` | 空 | 手工指定路由，JSON：`{"模型名":"qoder"}` 或 `"joycode"` |
 | `LOG_REQUESTS` | `1` | 控制台请求日志 |

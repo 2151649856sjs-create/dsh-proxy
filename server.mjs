@@ -26,6 +26,7 @@ const CFG = {
   qoder:     (process.env.QODER_BASE || 'http://127.0.0.1:8790').replace(/\/+$/, ''),
   joycode:   (process.env.JOYCODE_BASE || 'http://127.0.0.1:8318').replace(/\/+$/, ''),
   deepai:    (process.env.DEEPAI_BASE || '').replace(/\/+$/, ''),
+  opencode:  (process.env.OPENCODE_BASE || '').replace(/\/+$/, ''),
   fallback:  (process.env.DEFAULT_UPSTREAM || 'qoder').toLowerCase(),
   cors:      process.env.CORS_ORIGINS || '*',
   timeoutMs: parseInt(process.env.TIMEOUT_MS || '300000', 10),
@@ -45,30 +46,32 @@ const UPSTREAMS = {
   qoder:   CFG.qoder,
   joycode: CFG.joycode,
   ...(CFG.deepai ? { deepai: CFG.deepai } : {}),
+  ...(CFG.opencode ? { opencode: CFG.opencode } : {}),
 };
 
 // ---------- 按通道的用量记账（JoyCode 上游不返回余额，只能看消耗） ----------
 const USAGE_FILE = join(__dirname, 'usage.json');
 const todayStr = () => new Date().toISOString().slice(0, 10);
 const emptyBucket = () => ({ requests: 0, prompt: 0, completion: 0, failed: 0 });
-let USAGE = {
-  date: todayStr(),
-  today: { qoder: emptyBucket(), joycode: emptyBucket(), ...(CFG.deepai ? { deepai: emptyBucket() } : {}) },
-  total: { qoder: emptyBucket(), joycode: emptyBucket(), ...(CFG.deepai ? { deepai: emptyBucket() } : {}) },
+const freshBuckets = () => {
+  const b = {};
+  for (const k of Object.keys(UPSTREAMS)) b[k] = emptyBucket();
+  return b;
 };
+let USAGE = { date: todayStr(), today: freshBuckets(), total: freshBuckets() };
 try {
   if (existsSync(USAGE_FILE)) {
     const u = JSON.parse(readFileSync(USAGE_FILE, 'utf-8'));
     if (u && u.total) {
       USAGE = u;
-      if (USAGE.date !== todayStr()) { USAGE.date = todayStr(); USAGE.today = { qoder: emptyBucket(), joycode: emptyBucket(), ...(CFG.deepai ? { deepai: emptyBucket() } : {}) }; }
+      if (USAGE.date !== todayStr()) { USAGE.date = todayStr(); USAGE.today = freshBuckets(); }
     }
   }
 } catch { /* 账本坏了就从零开始，不影响转发 */ }
 
 function recordUsage(upstream, { prompt = 0, completion = 0, ok = true } = {}) {
   if (!USAGE.today[upstream]) return;
-  if (USAGE.date !== todayStr()) { USAGE.date = todayStr(); USAGE.today = { qoder: emptyBucket(), joycode: emptyBucket(), ...(CFG.deepai ? { deepai: emptyBucket() } : {}) }; }
+  if (USAGE.date !== todayStr()) { USAGE.date = todayStr(); USAGE.today = freshBuckets(); }
   for (const bucket of [USAGE.today[upstream], USAGE.total[upstream]]) {
     bucket.requests += 1;
     bucket.prompt += prompt || 0;
